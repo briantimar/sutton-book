@@ -14,8 +14,12 @@ function expectedreward(state::Int, pol::Policy, rewards::Array{Float64, 2})
     rewards[state, a]
 end
 
-function expectedreward(states, pol::Policy, rewards::Array{Float64, 2})
-    return collect( expectedreward(s, pol, rewards) for s in states)
+function expectedreward(state::Int, pol::Policy, getreward::Function)
+    getreward(state, pol(state))
+end
+
+function expectedreward(states, pol::Policy, reward)
+    return collect( expectedreward(s, pol, reward) for s in states)
 end
 
 " Performs a single update pass over vector of value estimates."
@@ -51,7 +55,7 @@ function policyeval(getsuccessors::Function, exprewards::Vector{Float64}, vals::
             @info "Convergence reached, halting after $i iterations"
             break
         end
-        prevvals = vals
+        prevvals .= vals
     end
     
     return vals
@@ -88,4 +92,50 @@ function policyiteration(pol::Policy, getsuccessors::Function, rewards::Array{Fl
         @info("policy: $(pol.actions), values: $values")
     end
     return values, pol
+end
+
+
+function qvalues(state, values::Vector{Float64},
+                     getactions::Function,  getreward::Function, getsuccessors::Function; gamma=1.0)
+
+    actions = getactions(state)
+    qvals = zeros(length(actions))
+    for i in 1:length(actions)
+        a = actions[i]
+        r = getreward(state, a)
+        sucs, probs = getsuccessors(state, a)
+        qvals[i] = r + gamma * sum(values[sucs] .* probs)
+    end
+    return actions, qvals
+end
+
+function greedyaction(state, values::Vector{Float64},
+                     getactions::Function,  getreward::Function, getsuccessors::Function; gamma=1.0)
+    actions, qvals = qvalues(state, values, getactions, getreward, getsuccessors, gamma=gamma)
+    return actions[argmax(qvals)], qvals[argmax(qvals)]
+end
+
+
+"perform value interation: returns state-value function"
+function valueiteration(statespace, getsuccessors::Function, getactions::Function, getreward::Function ; 
+        gamma=1.0, maxiter=100, tol=1e-3)
+    
+    values = zeros(length(statespace))
+    prevvalues = copy(values)
+    for i in 1:maxiter
+        
+        for s in statespace
+            a, qmax = greedyaction(s, values, getactions, getreward, getsuccessors, gamma=gamma)
+            values[s] = qmax
+        end
+        
+        diff = sum(abs.(values - prevvalues))
+        if diff < tol
+            @info "tolerance $tol reached after $i steps, halting"
+            return values
+        end
+        prevvalues .= values
+    end
+    @warn "$maxiter steps without value convergence"
+    return values
 end
